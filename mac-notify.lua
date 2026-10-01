@@ -1,7 +1,8 @@
 -- mac-notify.lua — Now Playing desktop notifications for cliamp on macOS
 --
--- Sends a notification on every track change, and (optionally) when the queue
--- finishes. Local files contribute their embedded artwork: ffmpeg extracts the
+-- Sends a notification on every track change, when playback (re)starts after
+-- a pause or stop, and (optionally) when the queue finishes. Local files
+-- contribute their embedded artwork: ffmpeg extracts the
 -- cover once per file (cached) and terminal-notifier shows it in the banner
 -- with -contentImage. YouTube tracks get their video thumbnail
 -- (i.ytimg.com/vi/<id>/hqdefault.jpg) the same way. Uses terminal-notifier
@@ -24,12 +25,13 @@
 --   sound     = ""             -- e.g. "Glass"; empty = silent
 --   group     = "mac-notify"   -- terminal-notifier only; "" = stack instead of replace
 --   queue_end = false          -- true = notify when the queue runs out
+--   play_start = true          -- notify when playback (re)starts (pause/stop -> play)
 --   art       = "auto"         -- auto | on | off; local cover + YouTube thumbnail
 
 local p = plugin.register({
     name = "mac-notify",
     type = "hook",
-    version = "1.3.0",
+    version = "1.4.0",
     description = "macOS Now Playing notifications with album art (local + YouTube)",
     permissions = { "exec" },
 })
@@ -42,6 +44,8 @@ if cfg_group == nil then
 end
 local cfg_queue_end = p:config("queue_end")
 local queue_end_on = cfg_queue_end == true or cfg_queue_end == "true"
+local cfg_play_start = p:config("play_start")
+local play_start_on = cfg_play_start == nil or cfg_play_start == true or cfg_play_start == "true"
 local cfg_art = p:config("art") or "auto"
 if cfg_art ~= "auto" and cfg_art ~= "on" and cfg_art ~= "off" then
     cliamp.log.warn('mac-notify: unknown art mode "' .. tostring(cfg_art) .. '", using "auto"')
@@ -300,12 +304,60 @@ local function notify(title, subtitle, body, path)
     }, mine, img, send, nil, 4)
 end
 
+-- Dedup shared by track.change and play-start: the same path announced twice
+-- within DEDUP_SECS is the same transition seen from two events (a track
+-- change and the matching state flip). queue.end and the test command do not
+-- take part.
+local DEDUP_SECS = 2
+local last_announce = { path = nil, at = 0 }
+
+local function recently_announced(path)
+    return type(path) == "string" and path ~= ""
+        and last_announce.path == path
+        and (os.time() - last_announce.at) < DEDUP_SECS
+end
+
+local function mark_announced(path)
+    if type(path) == "string" and path ~= "" then
+        last_announce.path = path
+        last_announce.at = os.time()
+    end
+end
+
+local prev_status = nil
+
 p:on("track.change", function(track)
     local title, artist, album = track_text(track)
     if not title then
         return
     end
+    if recently_announced(track.path) then
+        return
+    end
+    mark_announced(track.path)
     notify(title, artist, album, track.path)
+end)
+
+p:on("playback.state", function(ev)
+    local prev = prev_status
+    prev_status = ev.status
+    if not play_start_on then
+        return
+    end
+    -- Only a transition INTO playing (not seeks/volume while already
+    -- playing, and not the first event after plugin load).
+    if ev.status ~= "playing" or prev == nil or prev == "playing" then
+        return
+    end
+    if recently_announced(ev.path) then
+        return -- track.change already announced this track
+    end
+    local title, artist, album = track_text(ev)
+    if not title then
+        return
+    end
+    mark_announced(ev.path)
+    notify(title, artist, album, ev.path)
 end)
 
 p:on("queue.end", function(track)

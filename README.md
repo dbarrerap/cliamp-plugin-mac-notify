@@ -2,13 +2,18 @@
 
 Now Playing desktop notifications for [cliamp](https://github.com/bjarneo/cliamp) on macOS.
 
-Sends a notification on every track change with the track title, artist, and
-album — including local-file covers and YouTube thumbnails as the
-notification thumbnail — plus an optional "Playlist finished" notification
-when the queue runs out. cliamp's built-in `cliamp.notify` relies on
-`notify-send`, which only exists on Linux — this plugin uses the built-in
-`osascript` (and optionally `terminal-notifier`) instead. On Linux it falls
-back to `cliamp.notify`.
+Sends a notification on every track change and whenever playback (re)starts
+after a pause or stop, with the track title, artist, and album — including
+local-file covers and YouTube thumbnails as the notification thumbnail — plus
+an optional "Playlist finished" notification when the queue runs out. cliamp's
+built-in `cliamp.notify` relies on `notify-send`, which only exists on Linux —
+this plugin uses the built-in `osascript` (and optionally `terminal-notifier`)
+instead. On Linux it falls back to `cliamp.notify`.
+
+Notifications are system banners: they show regardless of which window is
+focused (only a system Focus/Do Not Disturb mode delays them). A 2-second
+per-path dedup keeps a track change and its matching play-start from producing
+two cards.
 
 > The Control Center / media-keys "Now Playing" widget is already built into
 > cliamp on macOS (`mediactl`). This plugin adds the desktop notifications.
@@ -40,6 +45,7 @@ allowed_binaries = "osascript, terminal-notifier"
 # sound     = ""            # macOS sound name, e.g. "Glass"; empty = silent
 # group     = "mac-notify"  # terminal-notifier only; "" = stack notifications
 # queue_end = false         # true = notify when the queue runs out
+# play_start = true         # notify when playback (re)starts (pause/stop -> play)
 # art       = "auto"        # auto (default) | on | off; cover + YouTube thumb
 ```
 
