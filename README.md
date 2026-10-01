@@ -3,8 +3,9 @@
 Now Playing desktop notifications for [cliamp](https://github.com/bjarneo/cliamp) on macOS.
 
 Sends a notification on every track change with the track title, artist, and
-album, plus an optional "Playlist finished" notification when the queue runs
-out. cliamp's built-in `cliamp.notify` relies on `notify-send`, which only
+album — including the embedded artwork of local files as the notification
+thumbnail — plus an optional "Playlist finished" notification when the queue
+runs out. cliamp's built-in `cliamp.notify` relies on `notify-send`, which only
 exists on Linux — this plugin uses the built-in `osascript` (and optionally
 `terminal-notifier`) instead. On Linux it falls back to `cliamp.notify`.
 
@@ -38,6 +39,7 @@ allowed_binaries = "osascript, terminal-notifier"
 # sound     = ""            # macOS sound name, e.g. "Glass"; empty = silent
 # group     = "mac-notify"  # terminal-notifier only; "" = stack notifications
 # queue_end = false         # true = notify when the queue runs out
+# art       = "auto"        # auto (default) | on | off; embedded cover
 ```
 
 Restart cliamp after editing the config.
@@ -54,6 +56,7 @@ when it is installed and allowlisted. It gives you:
 - a proper app icon instead of the generic **Script Editor** icon,
 - `-group`: each new track **replaces** the previous notification instead of
   stacking in Notification Center,
+- `-contentImage`: the embedded cover of local files as the thumbnail,
 - `-sound` and per-notification control.
 
 Two one-time steps after installing:
@@ -80,6 +83,21 @@ no image, notifications stack). Enable them once:
 
 If a Focus (Do Not Disturb) mode is active, notifications are delayed until it
 ends.
+
+## Album art (embedded)
+
+For local files the plugin extracts the cover embedded in the audio metadata
+(MP3/FLAC artwork) with `ffmpeg` and shows it as the notification thumbnail
+through terminal-notifier's `-contentImage`.
+
+- `ffmpeg` ships in cliamp's default allowlist — no extra configuration.
+- The cover is extracted once per file and cached in
+  `/tmp/cliamp-mac-notify/`. Files without embedded artwork are remembered
+  (`.none` marker) and never re-probed.
+- Only local paths are supported; streams and URLs never carry artwork.
+- `osascript` cannot display images: with that backend the banner stays
+  text-only.
+- Disable with `art = "off"` in `[plugins.mac-notify]`.
 
 ## Backends
 

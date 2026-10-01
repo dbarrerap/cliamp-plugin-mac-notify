@@ -1,11 +1,16 @@
 -- mac-notify.lua — Now Playing desktop notifications for cliamp on macOS
 --
 -- Sends a notification on every track change, and (optionally) when the queue
--- finishes. Uses terminal-notifier when it is installed, otherwise the
--- built-in osascript. When neither backend is available it falls back to
--- cliamp.notify (notify-send) so the plugin still works on Linux.
+-- finishes. Local files contribute their embedded artwork: ffmpeg extracts the
+-- cover once per file (cached) and terminal-notifier shows it in the banner
+-- with -contentImage. Uses terminal-notifier when it is installed, otherwise
+-- the built-in osascript. When neither backend is available it falls back to
+-- cliamp.notify (notify-send) so the plugin still works on Linux. Tracks
+-- without an album still notify: terminal-notifier needs a non-empty message,
+-- so an empty body falls back to the subtitle.
 --
--- Requires the exec permission and the notifier binary in the allowlist:
+-- Requires the exec permission and the notifier binaries in the allowlist
+-- (ffmpeg ships in cliamp's default allowlist):
 --
 --   [plugins]
 --   allowed_binaries = "osascript, terminal-notifier"
@@ -17,12 +22,13 @@
 --   sound     = ""             -- e.g. "Glass"; empty = silent
 --   group     = "mac-notify"   -- terminal-notifier only; "" = stack instead of replace
 --   queue_end = false          -- true = notify when the queue runs out
+--   art       = "auto"         -- auto | on | off; embedded cover of local files
 
 local p = plugin.register({
     name = "mac-notify",
     type = "hook",
-    version = "1.1.0",
-    description = "macOS Now Playing notifications on track change and queue end",
+    version = "1.2.0",
+    description = "macOS Now Playing notifications with embedded album art",
     permissions = { "exec" },
 })
 
@@ -34,6 +40,15 @@ if cfg_group == nil then
 end
 local cfg_queue_end = p:config("queue_end")
 local queue_end_on = cfg_queue_end == true or cfg_queue_end == "true"
+local cfg_art = p:config("art") or "auto"
+if cfg_art ~= "auto" and cfg_art ~= "on" and cfg_art ~= "off" then
+    cliamp.log.warn('mac-notify: unknown art mode "' .. tostring(cfg_art) .. '", using "auto"')
+    cfg_art = "auto"
+end
+local art_on = cfg_art ~= "off"
+
+local ART_DIR = "/tmp/cliamp-mac-notify"
+local seq = 0
 
 local active = nil
 local warned = {}
@@ -84,7 +99,7 @@ local function as_escape(s)
     return s
 end
 
-local function osascript_args(title, subtitle, body)
+local function osascript_args(title, subtitle, body, image)
     local script = 'display notification "' .. as_escape(body)
         .. '" with title "' .. as_escape(title) .. '"'
     if subtitle ~= "" then
@@ -96,7 +111,20 @@ local function osascript_args(title, subtitle, body)
     return { "-e", script }
 end
 
-local function terminal_notifier_args(title, subtitle, body)
+-- terminal-notifier rejects an empty or dash-leading -message.
+local function usable_msg(s)
+    return type(s) == "string" and s:match("%S") ~= nil and not s:match("^%-")
+end
+
+local function terminal_notifier_args(title, subtitle, body, image)
+    if not usable_msg(body) then
+        if usable_msg(subtitle) then
+            body = subtitle
+            subtitle = ""
+        else
+            body = "·"
+        end
+    end
     local args = { "-title", title }
     if subtitle ~= "" then
         table.insert(args, "-subtitle")
@@ -112,6 +140,10 @@ local function terminal_notifier_args(title, subtitle, body)
         table.insert(args, "-group")
         table.insert(args, cfg_group)
     end
+    if image then
+        table.insert(args, "-contentImage")
+        table.insert(args, image)
+    end
     return args
 end
 
@@ -120,9 +152,9 @@ local BACKENDS = {
     ["terminal-notifier"] = { bin = "terminal-notifier", args = terminal_notifier_args },
 }
 
-local function try_backend(name, title, subtitle, body)
+local function try_backend(name, title, subtitle, body, image)
     local backend = BACKENDS[name]
-    local handle, err = cliamp.exec.run(backend.bin, backend.args(title, subtitle, body), {
+    local handle, err = cliamp.exec.run(backend.bin, backend.args(title, subtitle, body, image), {
         on_exit = function(code)
             if code ~= 0 then
                 log_once("warn", "mac-notify " .. name .. " exited with code " .. tostring(code))
@@ -145,13 +177,13 @@ local function try_backend(name, title, subtitle, body)
     return true
 end
 
-local function notify(title, subtitle, body)
-    if active and try_backend(active, title, subtitle, body) then
+local function do_notify(title, subtitle, body, image)
+    if active and try_backend(active, title, subtitle, body, image) then
         return
     end
     local errs = {}
     for _, name in ipairs(candidates()) do
-        local ok, err = try_backend(name, title, subtitle, body)
+        local ok, err = try_backend(name, title, subtitle, body, image)
         if ok then
             return
         end
@@ -173,12 +205,66 @@ local function notify(title, subtitle, body)
     cliamp.notify(title, subtitle ~= "" and subtitle or body)
 end
 
+local function is_local(path)
+    return type(path) == "string" and path ~= "" and not path:match("^%a[%w%.%+%-]*:")
+end
+
+local function notify(title, subtitle, body, path)
+    -- Latest notification wins: a newer send invalidates a pending art chain.
+    seq = seq + 1
+    local mine = seq
+    local function send(image)
+        do_notify(title, subtitle, body, image)
+    end
+
+    if not art_on or not is_local(path) then
+        send(nil)
+        return
+    end
+
+    local key = cliamp.crypto.sha256(path)
+    local img = ART_DIR .. "/" .. key .. ".jpg"
+    local none = ART_DIR .. "/" .. key .. ".none"
+    if cliamp.fs.exists(img) then
+        send(img)
+        return
+    end
+    if cliamp.fs.exists(none) then
+        send(nil)
+        return
+    end
+
+    cliamp.fs.mkdir(ART_DIR)
+    local handle, err = cliamp.exec.run("ffmpeg", {
+        "-y", "-i", path, "-map", "0:v:0", "-frames:v", "1",
+        "-vf", "scale='min(512,iw)':-2", "-q:v", "3", img,
+    }, {
+        timeout = 10,
+        on_exit = function(code)
+            if mine ~= seq then
+                return -- superseded by a newer notification
+            end
+            if code == 0 and cliamp.fs.exists(img) then
+                send(img)
+            else
+                cliamp.fs.write(none, "")
+                send(nil)
+            end
+        end,
+    })
+    if not handle then
+        -- No .none marker on spawn failure: the next attempt may succeed.
+        log_once("warn", "mac-notify ffmpeg failed: " .. tostring(err) .. ", notification continues without art")
+        send(nil)
+    end
+end
+
 p:on("track.change", function(track)
     local title, artist, album = track_text(track)
     if not title then
         return
     end
-    notify(title, artist, album)
+    notify(title, artist, album, track.path)
 end)
 
 p:on("queue.end", function(track)
@@ -190,10 +276,10 @@ p:on("queue.end", function(track)
     artist = artist or ""
     album = album or ""
     local body = artist ~= "" and artist or album
-    notify("Playlist finished", title, body)
+    notify("Playlist finished", title, body, track.path)
 end)
 
 p:command("test", function()
-    notify("mac-notify", "Test", "Notification from cliamp")
+    notify("mac-notify", "Test", "Notification from cliamp", cliamp.track.path())
     return "notification requested"
 end)
