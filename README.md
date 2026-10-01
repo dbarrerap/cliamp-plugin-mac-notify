@@ -9,8 +9,8 @@ an optional "Playlist finished" notification when the queue runs out. A
 2-second debounce coalesces fast skipping into a single notification for the
 track you settle on (art is only fetched for that track). cliamp's
 built-in `cliamp.notify` relies on `notify-send`, which only exists on Linux —
-this plugin uses the built-in `osascript` (and optionally `terminal-notifier`)
-instead. On Linux it falls back to `cliamp.notify`.
+this plugin prefers `terminal-notifier` when it is installed and otherwise
+uses the built-in `osascript`. On Linux it falls back to `cliamp.notify`.
 
 Notifications are system banners: they show regardless of which window is
 focused (only a system Focus/Do Not Disturb mode delays them). A 2-second
@@ -40,10 +40,10 @@ The notifier binary must be allowlisted. Add to `~/.config/cliamp/config.toml`:
 
 ```toml
 [plugins]
-allowed_binaries = "osascript, terminal-notifier"
+allowed_binaries = "terminal-notifier, osascript"
 
 [plugins.mac-notify]
-# notifier  = "auto"        # auto (default) | osascript | terminal-notifier
+# notifier  = "auto"        # auto (default) | terminal-notifier | osascript
 # sound     = ""            # macOS sound name, e.g. "Glass"; empty = silent
 # group     = "mac-notify"  # terminal-notifier only; "" = stack notifications
 # queue_end = false         # true = notify when the queue runs out

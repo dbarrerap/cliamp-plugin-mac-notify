@@ -18,12 +18,12 @@
 -- (ffmpeg ships in cliamp's default allowlist):
 --
 --   [plugins]
---   allowed_binaries = "osascript, terminal-notifier"
+--   allowed_binaries = "terminal-notifier, osascript"
 --
 -- Optional configuration in config.toml:
 --
 --   [plugins.mac-notify]
---   notifier  = "auto"         -- auto | osascript | terminal-notifier
+--   notifier  = "auto"         -- auto | terminal-notifier | osascript
 --   sound     = ""             -- e.g. "Glass"; empty = silent
 --   group     = "mac-notify"   -- terminal-notifier only; "" = stack instead of replace
 --   queue_end = false          -- true = notify when the queue runs out
