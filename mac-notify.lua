@@ -1,7 +1,9 @@
 -- mac-notify.lua — Now Playing desktop notifications for cliamp on macOS
 --
 -- Sends a notification on every track change, when playback (re)starts after
--- a pause or stop, and (optionally) when the queue finishes. Local files
+-- a pause or stop, and (optionally) when the queue finishes. A debounce
+-- coalesces fast skipping into one notification for the track you settle on
+-- (art is fetched only for that track). Local files
 -- contribute their embedded artwork: ffmpeg extracts the
 -- cover once per file (cached) and terminal-notifier shows it in the banner
 -- with -contentImage. YouTube tracks get their video thumbnail
@@ -26,12 +28,13 @@
 --   group     = "mac-notify"   -- terminal-notifier only; "" = stack instead of replace
 --   queue_end = false          -- true = notify when the queue runs out
 --   play_start = true          -- notify when playback (re)starts (pause/stop -> play)
+--   debounce  = 2              -- seconds to wait after a track change; 0 = off
 --   art       = "auto"         -- auto | on | off; local cover + YouTube thumbnail
 
 local p = plugin.register({
     name = "mac-notify",
     type = "hook",
-    version = "1.4.0",
+    version = "1.5.0",
     description = "macOS Now Playing notifications with album art (local + YouTube)",
     permissions = { "exec" },
 })
@@ -46,6 +49,18 @@ local cfg_queue_end = p:config("queue_end")
 local queue_end_on = cfg_queue_end == true or cfg_queue_end == "true"
 local cfg_play_start = p:config("play_start")
 local play_start_on = cfg_play_start == nil or cfg_play_start == true or cfg_play_start == "true"
+local cfg_debounce = p:config("debounce")
+local debounce_secs = 2
+if type(cfg_debounce) == "number" then
+    debounce_secs = cfg_debounce
+elseif cfg_debounce == false then
+    debounce_secs = 0
+elseif type(cfg_debounce) == "string" then
+    debounce_secs = tonumber(cfg_debounce) or tonumber(cfg_debounce:match("%d+")) or 2
+end
+if debounce_secs < 0 then
+    debounce_secs = 0
+end
 local cfg_art = p:config("art") or "auto"
 if cfg_art ~= "auto" and cfg_art ~= "on" and cfg_art ~= "off" then
     cliamp.log.warn('mac-notify: unknown art mode "' .. tostring(cfg_art) .. '", using "auto"')
@@ -324,6 +339,28 @@ local function mark_announced(path)
     end
 end
 
+-- Debounce: a burst of track.change events (fast skipping) coalesces into a
+-- single notification for the track the user settles on. Art is fetched only
+-- when the timer fires, so skipped tracks cost nothing.
+local pending_id = nil
+local pending_path = nil
+
+local function cancel_pending()
+    if pending_id then
+        cliamp.timer.cancel(pending_id)
+        pending_id = nil
+        pending_path = nil
+    end
+end
+
+local function announce_now(title, artist, album, path)
+    if recently_announced(path) then
+        return
+    end
+    mark_announced(path)
+    notify(title, artist, album, path)
+end
+
 local prev_status = nil
 
 p:on("track.change", function(track)
@@ -334,8 +371,17 @@ p:on("track.change", function(track)
     if recently_announced(track.path) then
         return
     end
-    mark_announced(track.path)
-    notify(title, artist, album, track.path)
+    if debounce_secs <= 0 then
+        announce_now(title, artist, album, track.path)
+        return
+    end
+    cancel_pending()
+    pending_path = track.path
+    pending_id = cliamp.timer.after(debounce_secs, function()
+        pending_id = nil
+        pending_path = nil
+        announce_now(title, artist, album, track.path)
+    end)
 end)
 
 p:on("playback.state", function(ev)
@@ -349,18 +395,25 @@ p:on("playback.state", function(ev)
     if ev.status ~= "playing" or prev == nil or prev == "playing" then
         return
     end
-    if recently_announced(ev.path) then
-        return -- track.change already announced this track
+    if pending_id then
+        if pending_path == ev.path then
+            return -- the pending debounce timer delivers this track
+        end
+        cancel_pending() -- stale pending from an older track
     end
     local title, artist, album = track_text(ev)
     if not title then
         return
     end
-    mark_announced(ev.path)
-    notify(title, artist, album, ev.path)
+    announce_now(title, artist, album, ev.path)
+end)
+
+p:on("playback.stop", function()
+    cancel_pending()
 end)
 
 p:on("queue.end", function(track)
+    cancel_pending()
     if not queue_end_on then
         return
     end
@@ -370,6 +423,10 @@ p:on("queue.end", function(track)
     album = album or ""
     local body = artist ~= "" and artist or album
     notify("Playlist finished", title, body, track.path)
+end)
+
+p:on("app.quit", function()
+    cancel_pending()
 end)
 
 p:command("test", function()

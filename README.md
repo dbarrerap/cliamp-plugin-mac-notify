@@ -5,7 +5,9 @@ Now Playing desktop notifications for [cliamp](https://github.com/bjarneo/cliamp
 Sends a notification on every track change and whenever playback (re)starts
 after a pause or stop, with the track title, artist, and album — including
 local-file covers and YouTube thumbnails as the notification thumbnail — plus
-an optional "Playlist finished" notification when the queue runs out. cliamp's
+an optional "Playlist finished" notification when the queue runs out. A
+2-second debounce coalesces fast skipping into a single notification for the
+track you settle on (art is only fetched for that track). cliamp's
 built-in `cliamp.notify` relies on `notify-send`, which only exists on Linux —
 this plugin uses the built-in `osascript` (and optionally `terminal-notifier`)
 instead. On Linux it falls back to `cliamp.notify`.
@@ -46,6 +48,7 @@ allowed_binaries = "osascript, terminal-notifier"
 # group     = "mac-notify"  # terminal-notifier only; "" = stack notifications
 # queue_end = false         # true = notify when the queue runs out
 # play_start = true         # notify when playback (re)starts (pause/stop -> play)
+# debounce  = 2              # seconds to wait after a track change; 0 = off
 # art       = "auto"        # auto (default) | on | off; cover + YouTube thumb
 ```
 
