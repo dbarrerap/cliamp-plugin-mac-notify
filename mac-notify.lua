@@ -1,27 +1,28 @@
 -- mac-notify.lua — Now Playing desktop notifications for cliamp on macOS
 --
--- Sends a notification on every track change. Uses terminal-notifier when it
--- is installed, otherwise the built-in osascript. When neither backend is
--- available it falls back to cliamp.notify (notify-send) so the plugin still
--- works on Linux.
+-- Sends a notification on every track change, and (optionally) when the queue
+-- finishes. Uses terminal-notifier when it is installed, otherwise the
+-- built-in osascript. When neither backend is available it falls back to
+-- cliamp.notify (notify-send) so the plugin still works on Linux.
 --
 -- Requires the exec permission and the notifier binary in the allowlist:
 --
 --   [plugins]
---   allowed_binaries = "osascript"
+--   allowed_binaries = "osascript, terminal-notifier"
 --
 -- Optional configuration in config.toml:
 --
 --   [plugins.mac-notify]
---   notifier = "auto"          -- auto | osascript | terminal-notifier
---   sound    = ""              -- e.g. "Glass"; empty = silent
---   group    = "mac-notify"    -- terminal-notifier only; "" = stack instead of replace
+--   notifier  = "auto"         -- auto | osascript | terminal-notifier
+--   sound     = ""             -- e.g. "Glass"; empty = silent
+--   group     = "mac-notify"   -- terminal-notifier only; "" = stack instead of replace
+--   queue_end = false          -- true = notify when the queue runs out
 
 local p = plugin.register({
     name = "mac-notify",
     type = "hook",
-    version = "1.0.0",
-    description = "macOS Now Playing notifications on track change",
+    version = "1.1.0",
+    description = "macOS Now Playing notifications on track change and queue end",
     permissions = { "exec" },
 })
 
@@ -31,6 +32,8 @@ local cfg_group = p:config("group")
 if cfg_group == nil then
     cfg_group = "mac-notify"
 end
+local cfg_queue_end = p:config("queue_end")
+local queue_end_on = cfg_queue_end == true or cfg_queue_end == "true"
 
 local active = nil
 local warned = {}
@@ -176,6 +179,18 @@ p:on("track.change", function(track)
         return
     end
     notify(title, artist, album)
+end)
+
+p:on("queue.end", function(track)
+    if not queue_end_on then
+        return
+    end
+    local title, artist, album = track_text(track)
+    title = title or ""
+    artist = artist or ""
+    album = album or ""
+    local body = artist ~= "" and artist or album
+    notify("Playlist finished", title, body)
 end)
 
 p:command("test", function()

@@ -3,7 +3,8 @@
 Now Playing desktop notifications for [cliamp](https://github.com/bjarneo/cliamp) on macOS.
 
 Sends a notification on every track change with the track title, artist, and
-album. cliamp's built-in `cliamp.notify` relies on `notify-send`, which only
+album, plus an optional "Playlist finished" notification when the queue runs
+out. cliamp's built-in `cliamp.notify` relies on `notify-send`, which only
 exists on Linux — this plugin uses the built-in `osascript` (and optionally
 `terminal-notifier`) instead. On Linux it falls back to `cliamp.notify`.
 
@@ -30,24 +31,16 @@ The notifier binary must be allowlisted. Add to `~/.config/cliamp/config.toml`:
 
 ```toml
 [plugins]
-allowed_binaries = "osascript"   # add terminal-notifier too if you use it
+allowed_binaries = "osascript, terminal-notifier"
 
 [plugins.mac-notify]
-# notifier = "auto"       # auto (default) | osascript | terminal-notifier
-# sound    = ""           # macOS sound name, e.g. "Glass"; empty = silent
-# group    = "mac-notify" # terminal-notifier only; "" = stack notifications
+# notifier  = "auto"        # auto (default) | osascript | terminal-notifier
+# sound     = ""            # macOS sound name, e.g. "Glass"; empty = silent
+# group     = "mac-notify"  # terminal-notifier only; "" = stack notifications
+# queue_end = false         # true = notify when the queue runs out
 ```
 
 Restart cliamp after editing the config.
-
-## macOS notification permission
-
-`osascript` notifications are attributed to **Script Editor**. Enable them once:
-
-**System Settings → Notifications → Script Editor → Allow Notifications**
-
-If a Focus (Do Not Disturb) mode is active, notifications are delayed until it
-ends.
 
 ## terminal-notifier (optional)
 
@@ -56,8 +49,37 @@ brew install terminal-notifier
 ```
 
 With the default `notifier = "auto"`, the plugin prefers `terminal-notifier`
-when it is installed and allowlisted: cliamp-branded notifications and, through
-`group`, each new track replaces the previous notification instead of stacking.
+when it is installed and allowlisted. It gives you:
+
+- a proper app icon instead of the generic **Script Editor** icon,
+- `-group`: each new track **replaces** the previous notification instead of
+  stacking in Notification Center,
+- `-sound` and per-notification control.
+
+Two one-time steps after installing:
+
+1. Allow it in the allowlist (see Configuration above) and restart cliamp.
+2. Grant the permission: **System Settings → Notifications →
+   terminal-notifier → Allow Notifications** (style: Banners or Alerts).
+
+Check the state at any time:
+
+```sh
+terminal-notifier -diagnose
+```
+
+Look for `authorization authorized`. If it says `denied` or
+`not requested yet`, the app needs to be enabled in System Settings.
+
+## macOS notification permission
+
+`osascript` notifications are attributed to **Script Editor** (generic icon,
+no image, notifications stack). Enable them once:
+
+**System Settings → Notifications → Script Editor → Allow Notifications**
+
+If a Focus (Do Not Disturb) mode is active, notifications are delayed until it
+ends.
 
 ## Backends
 
@@ -79,6 +101,9 @@ cliamp plugins call mac-notify test
 ## Debugging
 
 Plugin logs: `~/.config/cliamp/plugins.log`
+
+Backend health: `terminal-notifier -diagnose` and
+`cliamp plugins call mac-notify test`.
 
 ## License
 
