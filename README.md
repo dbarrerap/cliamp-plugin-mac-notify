@@ -3,11 +3,12 @@
 Now Playing desktop notifications for [cliamp](https://github.com/bjarneo/cliamp) on macOS.
 
 Sends a notification on every track change with the track title, artist, and
-album — including the embedded artwork of local files as the notification
-thumbnail — plus an optional "Playlist finished" notification when the queue
-runs out. cliamp's built-in `cliamp.notify` relies on `notify-send`, which only
-exists on Linux — this plugin uses the built-in `osascript` (and optionally
-`terminal-notifier`) instead. On Linux it falls back to `cliamp.notify`.
+album — including local-file covers and YouTube thumbnails as the
+notification thumbnail — plus an optional "Playlist finished" notification
+when the queue runs out. cliamp's built-in `cliamp.notify` relies on
+`notify-send`, which only exists on Linux — this plugin uses the built-in
+`osascript` (and optionally `terminal-notifier`) instead. On Linux it falls
+back to `cliamp.notify`.
 
 > The Control Center / media-keys "Now Playing" widget is already built into
 > cliamp on macOS (`mediactl`). This plugin adds the desktop notifications.
@@ -39,7 +40,7 @@ allowed_binaries = "osascript, terminal-notifier"
 # sound     = ""            # macOS sound name, e.g. "Glass"; empty = silent
 # group     = "mac-notify"  # terminal-notifier only; "" = stack notifications
 # queue_end = false         # true = notify when the queue runs out
-# art       = "auto"        # auto (default) | on | off; embedded cover
+# art       = "auto"        # auto (default) | on | off; cover + YouTube thumb
 ```
 
 Restart cliamp after editing the config.
@@ -84,17 +85,25 @@ no image, notifications stack). Enable them once:
 If a Focus (Do Not Disturb) mode is active, notifications are delayed until it
 ends.
 
-## Album art (embedded)
+## Album art
 
-For local files the plugin extracts the cover embedded in the audio metadata
-(MP3/FLAC artwork) with `ffmpeg` and shows it as the notification thumbnail
-through terminal-notifier's `-contentImage`.
+Art comes from two sources, is cached in `/tmp/cliamp-mac-notify/`, and is
+shown through terminal-notifier's `-contentImage`:
+
+- **Local files**: the cover embedded in the audio metadata (MP3/FLAC
+  artwork), extracted with `ffmpeg`.
+- **YouTube tracks**: the video thumbnail
+  (`https://i.ytimg.com/vi/<id>/hqdefault.jpg`), downloaded with `ffmpeg`.
+  Network failures are **retried on the next play** instead of being cached,
+  and the cache is keyed by video ID, so the same video from different
+  playlist URLs shares one entry.
+
+Notes:
 
 - `ffmpeg` ships in cliamp's default allowlist — no extra configuration.
-- The cover is extracted once per file and cached in
-  `/tmp/cliamp-mac-notify/`. Files without embedded artwork are remembered
-  (`.none` marker) and never re-probed.
-- Only local paths are supported; streams and URLs never carry artwork.
+- Local files without embedded artwork are remembered (`.none` marker) and
+  never re-probed.
+- Other streams and URLs stay text-only.
 - `osascript` cannot display images: with that backend the banner stays
   text-only.
 - Disable with `art = "off"` in `[plugins.mac-notify]`.

@@ -3,11 +3,13 @@
 -- Sends a notification on every track change, and (optionally) when the queue
 -- finishes. Local files contribute their embedded artwork: ffmpeg extracts the
 -- cover once per file (cached) and terminal-notifier shows it in the banner
--- with -contentImage. Uses terminal-notifier when it is installed, otherwise
--- the built-in osascript. When neither backend is available it falls back to
--- cliamp.notify (notify-send) so the plugin still works on Linux. Tracks
--- without an album still notify: terminal-notifier needs a non-empty message,
--- so an empty body falls back to the subtitle.
+-- with -contentImage. YouTube tracks get their video thumbnail
+-- (i.ytimg.com/vi/<id>/hqdefault.jpg) the same way. Uses terminal-notifier
+-- when it is installed, otherwise the built-in osascript. When neither backend
+-- is available it falls back to cliamp.notify (notify-send) so the plugin
+-- still works on Linux. Tracks without an album still notify:
+-- terminal-notifier needs a non-empty message, so an empty body falls back to
+-- the subtitle.
 --
 -- Requires the exec permission and the notifier binaries in the allowlist
 -- (ffmpeg ships in cliamp's default allowlist):
@@ -22,13 +24,13 @@
 --   sound     = ""             -- e.g. "Glass"; empty = silent
 --   group     = "mac-notify"   -- terminal-notifier only; "" = stack instead of replace
 --   queue_end = false          -- true = notify when the queue runs out
---   art       = "auto"         -- auto | on | off; embedded cover of local files
+--   art       = "auto"         -- auto | on | off; local cover + YouTube thumbnail
 
 local p = plugin.register({
     name = "mac-notify",
     type = "hook",
-    version = "1.2.0",
-    description = "macOS Now Playing notifications with embedded album art",
+    version = "1.3.0",
+    description = "macOS Now Playing notifications with album art (local + YouTube)",
     permissions = { "exec" },
 })
 
@@ -205,8 +207,48 @@ local function do_notify(title, subtitle, body, image)
     cliamp.notify(title, subtitle ~= "" and subtitle or body)
 end
 
+local SCALE = "scale='min(512,iw)':-2"
+
 local function is_local(path)
     return type(path) == "string" and path ~= "" and not path:match("^%a[%w%.%+%-]*:")
+end
+
+local function fetch_art(args, mine, out, send, none, timeout)
+    cliamp.fs.mkdir(ART_DIR)
+    local handle, err = cliamp.exec.run("ffmpeg", args, {
+        timeout = timeout,
+        on_exit = function(code)
+            if mine ~= seq then
+                return -- superseded by a newer notification
+            end
+            if code == 0 and cliamp.fs.exists(out) then
+                send(out)
+            else
+                if none then
+                    cliamp.fs.write(none, "")
+                end
+                send(nil)
+            end
+        end,
+    })
+    if not handle then
+        -- No .none marker on spawn failure: the next attempt may succeed.
+        log_once("warn", "mac-notify ffmpeg failed: " .. tostring(err) .. ", notification continues without art")
+        send(nil)
+    end
+end
+
+local function youtube_id(path)
+    if type(path) ~= "string" then
+        return nil
+    end
+    if not path:match("^https?://[^/]*youtube%.com/") and not path:match("^https?://youtu%.be/") then
+        return nil
+    end
+    return path:match("[?&]v=([%w_-]+)")
+        or path:match("youtu%.be/([%w_-]+)")
+        or path:match("/shorts/([%w_-]+)")
+        or path:match("/live/([%w_-]+)")
 end
 
 local function notify(title, subtitle, body, path)
@@ -217,46 +259,45 @@ local function notify(title, subtitle, body, path)
         do_notify(title, subtitle, body, image)
     end
 
-    if not art_on or not is_local(path) then
+    if not art_on then
         send(nil)
         return
     end
 
-    local key = cliamp.crypto.sha256(path)
-    local img = ART_DIR .. "/" .. key .. ".jpg"
-    local none = ART_DIR .. "/" .. key .. ".none"
+    if is_local(path) then
+        local key = cliamp.crypto.sha256(path)
+        local img = ART_DIR .. "/" .. key .. ".jpg"
+        local none = ART_DIR .. "/" .. key .. ".none"
+        if cliamp.fs.exists(img) then
+            send(img)
+            return
+        end
+        if cliamp.fs.exists(none) then
+            send(nil)
+            return
+        end
+        fetch_art({
+            "-y", "-i", path, "-map", "0:v:0", "-frames:v", "1",
+            "-vf", SCALE, "-q:v", "3", img,
+        }, mine, img, send, none, 10)
+        return
+    end
+
+    local yid = youtube_id(path)
+    if not yid then
+        send(nil)
+        return
+    end
+    local img = ART_DIR .. "/yt-" .. yid .. ".jpg"
     if cliamp.fs.exists(img) then
         send(img)
         return
     end
-    if cliamp.fs.exists(none) then
-        send(nil)
-        return
-    end
-
-    cliamp.fs.mkdir(ART_DIR)
-    local handle, err = cliamp.exec.run("ffmpeg", {
-        "-y", "-i", path, "-map", "0:v:0", "-frames:v", "1",
-        "-vf", "scale='min(512,iw)':-2", "-q:v", "3", img,
-    }, {
-        timeout = 10,
-        on_exit = function(code)
-            if mine ~= seq then
-                return -- superseded by a newer notification
-            end
-            if code == 0 and cliamp.fs.exists(img) then
-                send(img)
-            else
-                cliamp.fs.write(none, "")
-                send(nil)
-            end
-        end,
-    })
-    if not handle then
-        -- No .none marker on spawn failure: the next attempt may succeed.
-        log_once("warn", "mac-notify ffmpeg failed: " .. tostring(err) .. ", notification continues without art")
-        send(nil)
-    end
+    -- Network failures are transient: no .none marker, retry on next play.
+    fetch_art({
+        "-y", "-i", "https://i.ytimg.com/vi/" .. yid .. "/hqdefault.jpg",
+        "-frames:v", "1", "-vf", SCALE, "-q:v", "3", img,
+    }, mine, img, send, nil, 4)
 end
 
 p:on("track.change", function(track)
